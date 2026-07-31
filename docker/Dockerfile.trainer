@@ -1,0 +1,20 @@
+# Dockerfile for training, drift detection, and Airflow workers
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY pyproject.toml .
+COPY src/ ./src/
+COPY airflow/ ./airflow/
+COPY simulator/ ./simulator/
+COPY baseline_distribution.json* ./
+
+RUN pip install --no-cache-dir -e .
+
+CMD ["python", "-m", "src.model.retrain"]

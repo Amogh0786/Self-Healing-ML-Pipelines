@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  mlflow-server:
+    image: ghcr.io/mlflow/mlflow:v2.11.0
+    container_name: mlflow-server
+    ports:
+      - "5000:5000"
+    command: mlflow server --host 0.0.0.0 --port 5000
+    volumes:
+      - ./mlruns:/mlruns
+      - ./mlflow.db:/mlflow.db
+
+  fastapi-serving:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    container_name: fastapi-serving
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    volumes:
+      - ./logs.db:/app/logs.db
+      - ./baseline_distribution.json:/app/baseline_distribution.json
+      - ./production_model.joblib:/app/production_model.joblib
+    depends_on:
+      - mlflow-server
+
+  drift-detector:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.trainer
+    container_name: drift-detector
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow-server:5000
+    volumes:
+      - ./logs.db:/app/logs.db
+      - ./baseline_distribution.json:/app/baseline_distribution.json
+      - ./drift_report.json:/app/drift_report.json
+    command: python -c "from src.drift.detector import DriftDetector; from src.drift.report import save_drift_report, generate_drift_report; d = DriftDetector(); drift, r = d.detect_drift(); save_drift_report(r); print(generate_drift_report(r))"
+    depends_on:
+      - fastapi-serving

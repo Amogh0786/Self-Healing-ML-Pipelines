@@ -1,0 +1,44 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# MLflow and Logs
+mlruns/
+mlflow.db
+logs.db
+*.db
+*.log
+data/
+baseline_distribution.json
+baseline_model.joblib
+production_model.joblib
+drift_report.json
+healing_audit_log.json
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment
+.env
+.venv
+venv/
+ENV/

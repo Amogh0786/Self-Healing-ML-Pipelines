@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fastapi-model-serving
+  namespace: mlops
+  labels:
+    app: fastapi-model
+    tier: inference
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: fastapi-model
+  template:
+    metadata:
+      labels:
+        app: fastapi-model
+        version: "production"
+    spec:
+      containers:
+      - name: fastapi
+        image: self-healing-mlops/api:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-service.mlops.svc.cluster.local:5000"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          successThreshold: 1
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fastapi-model-service
+  namespace: mlops
+  labels:
+    app: fastapi-model
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: 8000
+    name: http
+  selector:
+    app: fastapi-model

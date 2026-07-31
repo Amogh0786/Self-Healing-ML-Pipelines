@@ -1,0 +1,28 @@
+# Multi-stage Dockerfile for FastAPI model serving
+FROM python:3.11-slim as base
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=off
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code and default models/distributions if present
+COPY pyproject.toml .
+COPY src/ ./src/
+COPY baseline_distribution.json* ./
+COPY *.joblib* ./
+
+RUN pip install --no-cache-dir -e .
+
+EXPOSE 8000
+
+# Health probe check command
+HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "src.api.app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]

@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mlops-retrain-job
+  namespace: mlops
+  labels:
+    app: mlops-retrain
+spec:
+  template:
+    metadata:
+      labels:
+        app: mlops-retrain
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: trainer
+        image: self-healing-mlops/trainer:latest
+        imagePullPolicy: IfNotPresent
+        command: ["python", "-m", "src.model.retrain"]
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: "http://mlflow-service.mlops.svc.cluster.local:5000"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
