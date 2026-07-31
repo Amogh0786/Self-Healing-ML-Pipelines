@@ -1,6 +1,6 @@
 # Self-Healing Automated Production MLOps Pipeline
 
-[![CI/CD Pipeline](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![CI/CD Pipeline](https://github.com/Amogh0786/Self-Healing-ML-Pipelines/actions/workflows/ci.yml/badge.svg)](https://github.com/Amogh0786/Self-Healing-ML-Pipelines/actions/workflows/ci.yml)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)]()
 [![ISO 27001 Ready](https://img.shields.io/badge/Audit-ISO%2027001%20Ready-purple.svg)]()
