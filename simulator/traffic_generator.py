@@ -4,6 +4,7 @@ Simulates normal live API requests and injects skewed feature distributions to t
 """
 import random
 import time
+import uuid
 from typing import Dict, Any, Optional
 import numpy as np
 import pandas as pd
@@ -81,13 +82,14 @@ def generate_traffic(
                 if r.status_code == 200:
                     count_sent += 1
             except Exception:
-                # Fallback to direct logging
-                logger.log_request(payload, prediction=0.0)
+                # Fallback to direct batch logging
+                dummy_pred = payload["MedInc"] * 0.45 + random.uniform(0.5, 1.5)
+                logger.log_batch([{"type": "prediction", "request_id": str(uuid.uuid4()), "features": payload, "prediction": dummy_pred}])
                 count_sent += 1
         else:
             # Simulate a reasonable dummy prediction for offline logging
             dummy_pred = payload["MedInc"] * 0.45 + random.uniform(0.5, 1.5)
-            logger.log_request(payload, prediction=dummy_pred)
+            logger.log_batch([{"type": "prediction", "request_id": str(uuid.uuid4()), "features": payload, "prediction": dummy_pred}])
             count_sent += 1
 
         if delay_seconds > 0:
