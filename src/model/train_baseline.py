@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import joblib
 from sklearn.datasets import fetch_california_housing
-from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
 
@@ -75,11 +75,11 @@ def train_baseline_model(
     model_output_path: str = "production_model.joblib",
     distribution_output_path: str = "baseline_distribution.json",
     n_estimators: int = 50,
-    max_depth: int = 10,
+    max_depth: int = 6,
     random_state: int = 42
 ) -> Tuple[Any, Dict[str, float], str]:
     """
-    Trains baseline Random Forest model, serializes reference feature distribution P(x),
+    Trains baseline XGBoost model, serializes reference feature distribution P(x),
     and logs the model to MLflow as the initial Production model.
     """
     print("Loading California Housing dataset...")
@@ -99,8 +99,8 @@ def train_baseline_model(
         X, y, test_size=0.2, random_state=random_state
     )
     
-    print(f"Training RandomForestRegressor(n_estimators={n_estimators}, max_depth={max_depth})...")
-    model = RandomForestRegressor(
+    print(f"Training XGBRegressor(n_estimators={n_estimators}, max_depth={max_depth})...")
+    model = XGBRegressor(
         n_estimators=n_estimators,
         max_depth=max_depth,
         random_state=random_state,

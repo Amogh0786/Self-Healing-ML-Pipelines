@@ -7,8 +7,9 @@ import sqlite3
 from typing import Dict, Any, Tuple, Optional
 import numpy as np
 import pandas as pd
+import joblib
 from sklearn.datasets import fetch_california_housing
-from sklearn.ensemble import RandomForestRegressor
+from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import root_mean_squared_error, mean_absolute_error, r2_score
 
@@ -17,18 +18,17 @@ from src.model.train_baseline import FEATURE_NAMES, save_baseline_distributions
 
 
 def fetch_production_logs(db_path: str = "logs.db", limit: int = 1000) -> Optional[pd.DataFrame]:
-    """Fetches recent logged feature vectors from the production inference database."""
+    """Fetches recent logged feature vectors. Prioritizes those with actual ground truth feedback."""
     if not os.path.exists(db_path):
         return None
     try:
         conn = sqlite3.connect(db_path)
-        query = f"SELECT {', '.join(FEATURE_NAMES)}, prediction FROM inference_logs ORDER BY id DESC LIMIT {limit}"
+        # Prefer actual_value if available, fallback to prediction
+        query = f"SELECT {', '.join(FEATURE_NAMES)}, COALESCE(actual_value, prediction) as MedHouseVal FROM inference_logs ORDER BY id DESC LIMIT {limit}"
         df = pd.read_sql_query(query, conn)
         conn.close()
         if len(df) == 0:
             return None
-        # Rename prediction column to target label MedHouseVal
-        df = df.rename(columns={"prediction": "MedHouseVal"})
         return df
     except Exception as e:
         print(f"Warning: Could not fetch production logs from {db_path}: {e}")
@@ -37,27 +37,29 @@ def fetch_production_logs(db_path: str = "logs.db", limit: int = 1000) -> Option
 
 def run_retraining_pipeline(
     db_path: str = "logs.db",
-    n_estimators: int = 80,
-    max_depth: int = 12,
+    existing_model_path: str = "production_model.joblib",
+    n_estimators: int = 50,
+    max_depth: int = 6,
     random_state: int = 101,
     update_baseline_distribution: bool = True
 ) -> Tuple[Any, Dict[str, float], str]:
     """
-    Runs retraining on the combined dataset (baseline + production logged requests),
-    evaluates performance, and logs candidate model to MLflow as Staging.
+    Runs incremental retraining on purely the newly logged data using XGBoost's xgb_model parameter,
+    slashing compute costs compared to full baseline retraining.
     """
-    print("Fetching original California Housing baseline dataset...")
-    base_data = fetch_california_housing(as_frame=True)
-    df_train = base_data.frame.copy()
-    
-    # Check for production logged requests to augment/adapt model
     logged_df = fetch_production_logs(db_path=db_path)
-    if logged_df is not None and len(logged_df) > 0:
-        print(f"Incorporating {len(logged_df)} recent production logged requests into retraining set...")
-        df_train = pd.concat([df_train, logged_df], ignore_index=True)
+    
+    if logged_df is None or len(logged_df) < 50:
+        print("Not enough new data for incremental learning. Falling back to full baseline retrain...")
+        # Fallback to full dataset for demonstration purposes
+        base_data = fetch_california_housing(as_frame=True)
+        df_train = base_data.frame
+        existing_model = None
     else:
-        print("No logged production requests found or db unavailable; training on baseline with updated hyperparameters...")
-        
+        print(f"Executing Incremental Learning on {len(logged_df)} new production records...")
+        df_train = logged_df
+        existing_model = joblib.load(existing_model_path) if os.path.exists(existing_model_path) else None
+
     X = df_train[FEATURE_NAMES]
     y = df_train["MedHouseVal"]
     
@@ -67,14 +69,18 @@ def run_retraining_pipeline(
         X, y, test_size=0.2, random_state=random_state
     )
     
-    print(f"Training candidate RandomForestRegressor(n_estimators={n_estimators}, max_depth={max_depth})...")
-    candidate_model = RandomForestRegressor(
+    print(f"Training candidate XGBRegressor incrementally...")
+    candidate_model = XGBRegressor(
         n_estimators=n_estimators,
         max_depth=max_depth,
         random_state=random_state,
         n_jobs=-1
     )
-    candidate_model.fit(X_train, y_train)
+    
+    if existing_model:
+        candidate_model.fit(X_train, y_train, xgb_model=existing_model)
+    else:
+        candidate_model.fit(X_train, y_train)
     
     # Evaluate candidate
     y_pred = candidate_model.predict(X_test)
@@ -91,7 +97,8 @@ def run_retraining_pipeline(
         "n_estimators": n_estimators,
         "max_depth": max_depth,
         "random_state": random_state,
-        "retrain_samples": len(df_train)
+        "retrain_samples": len(df_train),
+        "incremental": bool(existing_model)
     }
     
     print(f"Candidate Evaluation -> RMSE: {rmse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f}")
@@ -107,7 +114,6 @@ def run_retraining_pipeline(
         stage_tag="Staging"
     )
     
-    # Optionally update baseline distribution if requested
     if update_baseline_distribution:
         save_baseline_distributions(X, output_path="baseline_distribution.json")
         print("Updated reference baseline feature distributions after retraining.")
