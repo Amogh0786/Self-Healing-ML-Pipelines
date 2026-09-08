@@ -5,7 +5,7 @@ import os
 import hashlib
 from typing import Dict, Any, Optional
 import mlflow
-import mlflow.sklearn
+import mlflow.xgboost
 import numpy as np
 
 
@@ -26,11 +26,11 @@ def setup_mlflow(
     uri = tracking_uri or os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db")
     mlflow.set_tracking_uri(uri)
     
-    # Enable scikit-learn autologging
-    mlflow.sklearn.autolog(
-        log_input_examples=True,
+    # Enable XGBoost autologging
+    mlflow.xgboost.autolog(
+        log_input_examples=False,
         log_model_signatures=True,
-        log_models=True,
+        log_models=False,  # We log manually below to control registration
         silent=True
     )
     
@@ -61,9 +61,10 @@ def log_model_with_metrics(
 ) -> str:
     """
     Logs hyperparameters, validation metrics, dataset version, and registers the model.
+    Uses mlflow.xgboost.log_model to avoid skops trusted-types restrictions.
     
     Args:
-        model: Trained scikit-learn model.
+        model: Trained XGBoost model.
         model_name: Registered model name in MLflow.
         metrics: Dictionary of metric names and float values (e.g., {'r2': 0.82, 'rmse': 0.45}).
         params: Hyperparameters dictionary.
@@ -87,11 +88,12 @@ def log_model_with_metrics(
         for k, v in metrics.items():
             mlflow.log_metric(k, float(v))
             
-        # Log model artifact
-        mlflow.sklearn.log_model(
-            sk_model=model,
+        # Use XGBoost native flavor — avoids skops security restriction entirely
+        mlflow.xgboost.log_model(
+            xgb_model=model,
             artifact_path=artifact_path,
             registered_model_name=model_name
         )
         
         return run.info.run_id
+
