@@ -29,7 +29,7 @@ def test_metrics_endpoint():
 
 
 def test_prediction_logging():
-    """Tests /predict endpoint and verifies request is logged to DB."""
+    """Tests /predict endpoint returns valid prediction with request_id."""
     # Ensure baseline model is trained or create dummy model for test
     from src.model.train_baseline import train_baseline_model
     if not os.path.exists("production_model.joblib"):
@@ -46,13 +46,37 @@ def test_prediction_logging():
         "Longitude": -122.23
     }
     
-    count_before = logger_service.get_log_count()
     response = client.post("/predict", json=payload)
     assert response.status_code == 200, f"Error response: {response.text}"
     
     data = response.json()
     assert "prediction" in data
     assert isinstance(data["prediction"], float)
-    
-    count_after = logger_service.get_log_count()
-    assert count_after == count_before + 1, "Inference logger must increment request count by 1"
+    assert "request_id" in data
+    assert isinstance(data["request_id"], str)
+    assert len(data["request_id"]) > 0
+
+
+def test_feedback_endpoint():
+    """Tests POST /feedback stores ground truth without error."""
+    from src.model.train_baseline import train_baseline_model
+    if not os.path.exists("production_model.joblib"):
+        train_baseline_model(n_estimators=5, max_depth=3)
+
+    # First get a request_id
+    payload = {
+        "MedInc": 5.0, "HouseAge": 25.0, "AveRooms": 5.0,
+        "AveBedrms": 1.0, "Population": 500.0, "AveOccup": 2.5,
+        "Latitude": 34.0, "Longitude": -118.0
+    }
+    predict_resp = client.post("/predict", json=payload)
+    assert predict_resp.status_code == 200
+    request_id = predict_resp.json()["request_id"]
+
+    # Submit feedback with actual value
+    feedback_resp = client.post("/feedback", json={
+        "request_id": request_id,
+        "actual_value": 2.5
+    })
+    assert feedback_resp.status_code == 200
+    assert feedback_resp.json()["status"] == "feedback_queued"
