@@ -3,13 +3,15 @@ FastAPI Serving Application for California Housing Price Prediction.
 Includes model serving, real-time database logging, health probes, and model hot-reload.
 """
 import os
+import uuid
 import joblib
 import pandas as pd
 from datetime import datetime
-from fastapi import FastAPI, HTTPException, status
-from src.api.schemas import HousingFeatures, PredictionResponse
+from fastapi import FastAPI, HTTPException, status, BackgroundTasks
+from src.api.schemas import HousingFeatures, PredictionResponse, FeedbackRequest
 from src.api.logger import InferenceLogger
 from src.model.train_baseline import FEATURE_NAMES
+from src.api.event_stream import producer, EventStreamConsumer
 
 app = FastAPI(
     title="Self-Healing MLOps Inference Service",
@@ -21,7 +23,7 @@ app = FastAPI(
 model = None
 model_version_tag = "Production-v1"
 logger_service = InferenceLogger(db_path="logs.db")
-
+consumer = EventStreamConsumer(producer, logger_service)
 
 def load_model() -> None:
     """Loads the production model from disk."""
@@ -35,16 +37,19 @@ def load_model() -> None:
             return
     print("Warning: No pre-trained model file found on disk.")
 
-
 @app.on_event("startup")
 def startup_event():
     load_model()
+    consumer.start()
 
+@app.on_event("shutdown")
+def shutdown_event():
+    consumer.stop()
 
 @app.post("/predict", response_model=PredictionResponse)
 def predict(features: HousingFeatures):
     """
-    Predicts median house value and logs incoming features to SQLite for drift evaluation.
+    Predicts median house value and asynchronously pushes event to EventStream.
     """
     global model, model_version_tag
     if model is None:
@@ -66,14 +71,25 @@ def predict(features: HousingFeatures):
             detail=f"Inference error: {str(e)}"
         )
 
-    # Log feature vector and prediction asynchronously/thread-safely
-    logger_service.log_request(feature_dict, prediction)
+    request_id = str(uuid.uuid4())
+    
+    # Non-blocking async event publish
+    producer.publish_prediction_event(request_id, feature_dict, prediction)
 
     return PredictionResponse(
+        request_id=request_id,
         prediction=prediction,
         model_version=model_version_tag,
         timestamp=datetime.utcnow().isoformat()
     )
+
+@app.post("/feedback")
+def submit_feedback(feedback: FeedbackRequest):
+    """
+    Ingests delayed ground truth labels (Concept Drift) to inform the Hybrid Healing Engine.
+    """
+    producer.publish_feedback_event(feedback.request_id, feedback.actual_value)
+    return {"status": "feedback_queued", "request_id": feedback.request_id}
 
 
 @app.get("/health")

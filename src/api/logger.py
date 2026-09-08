@@ -25,6 +25,7 @@ class InferenceLogger:
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS inference_logs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    request_id TEXT UNIQUE,
                     timestamp TEXT NOT NULL,
                     MedInc REAL NOT NULL,
                     HouseAge REAL NOT NULL,
@@ -34,44 +35,53 @@ class InferenceLogger:
                     AveOccup REAL NOT NULL,
                     Latitude REAL NOT NULL,
                     Longitude REAL NOT NULL,
-                    prediction REAL NOT NULL
+                    prediction REAL NOT NULL,
+                    actual_value REAL
                 )
             """)
             conn.commit()
             conn.close()
 
-    def log_request(self, features: Dict[str, float], prediction: float) -> int:
+    def log_batch(self, batch: list) -> None:
         """
-        Logs a single inference feature vector and prediction to SQLite.
+        Efficiently logs a batch of events (predictions and feedback) to SQLite.
+        """
+        predictions = []
+        feedback = []
         
-        Returns:
-            row_id: Inserted record ID.
-        """
-        timestamp = datetime.utcnow().isoformat()
+        for event in batch:
+            if event["type"] == "prediction":
+                timestamp = datetime.utcnow().isoformat()
+                predictions.append((
+                    event["request_id"], timestamp,
+                    event["features"]["MedInc"], event["features"]["HouseAge"],
+                    event["features"]["AveRooms"], event["features"]["AveBedrms"],
+                    event["features"]["Population"], event["features"]["AveOccup"],
+                    event["features"]["Latitude"], event["features"]["Longitude"],
+                    event["prediction"]
+                ))
+            elif event["type"] == "feedback":
+                feedback.append((event["actual_value"], event["request_id"]))
+                
         with self._lock:
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO inference_logs (
-                    timestamp, MedInc, HouseAge, AveRooms, AveBedrms,
-                    Population, AveOccup, Latitude, Longitude, prediction
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (
-                timestamp,
-                features["MedInc"],
-                features["HouseAge"],
-                features["AveRooms"],
-                features["AveBedrms"],
-                features["Population"],
-                features["AveOccup"],
-                features["Latitude"],
-                features["Longitude"],
-                prediction
-            ))
-            row_id = cursor.lastrowid
+            
+            if predictions:
+                cursor.executemany("""
+                    INSERT INTO inference_logs (
+                        request_id, timestamp, MedInc, HouseAge, AveRooms, AveBedrms,
+                        Population, AveOccup, Latitude, Longitude, prediction
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, predictions)
+                
+            if feedback:
+                cursor.executemany("""
+                    UPDATE inference_logs SET actual_value = ? WHERE request_id = ?
+                """, feedback)
+                
             conn.commit()
             conn.close()
-            return row_id or 0
 
     def get_log_count(self) -> int:
         """Returns total number of logged inference requests."""

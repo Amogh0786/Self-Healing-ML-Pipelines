@@ -35,6 +35,14 @@ class PredictionResponse(BaseModel):
     """
     Response schema for model prediction endpoint.
     """
+    request_id: str = Field(..., description="Unique ID for this request, used for feedback loops")
     prediction: float = Field(..., description="Predicted median house value (in $100,000s)")
     model_version: str = Field(..., description="Serving model version or stage")
     timestamp: str = Field(..., description="ISO timestamp of prediction")
+
+class FeedbackRequest(BaseModel):
+    """
+    Schema for delayed ground truth feedback.
+    """
+    request_id: str = Field(..., description="The request_id returned by the /predict endpoint")
+    actual_value: float = Field(..., description="The true median house value (in $100,000s)")
