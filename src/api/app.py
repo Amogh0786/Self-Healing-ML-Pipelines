@@ -21,21 +21,34 @@ app = FastAPI(
 
 # Global state
 model = None
+shadow_model = None
 model_version_tag = "Production-v1"
 logger_service = InferenceLogger(db_path="logs.db")
 consumer = EventStreamConsumer(producer, logger_service)
 
 def load_model() -> None:
-    """Loads the production model from disk."""
-    global model, model_version_tag
+    """Loads the production model and optional shadow/staging model from disk."""
+    global model, shadow_model, model_version_tag
     candidates = ["production_model.joblib", "baseline_model.joblib"]
     for path in candidates:
         if os.path.exists(path):
             model = joblib.load(path)
             model_version_tag = f"Production-{os.path.basename(path).replace('.joblib', '')}"
             print(f"Loaded serving model from {path} ({model_version_tag})")
-            return
-    print("Warning: No pre-trained model file found on disk.")
+            break
+            
+    # Attempt to load Shadow (Staging) Model
+    if os.path.exists("staging_model.joblib"):
+        try:
+            shadow_model = joblib.load("staging_model.joblib")
+            print("Loaded Shadow Model for silent A/B evaluation.")
+        except Exception:
+            shadow_model = None
+    else:
+        shadow_model = None
+
+    if model is None:
+        print("Warning: No pre-trained model file found on disk.")
 
 @app.on_event("startup")
 def startup_event():
@@ -46,10 +59,22 @@ def startup_event():
 def shutdown_event():
     consumer.stop()
 
+def run_shadow_scoring(df: pd.DataFrame, prod_prediction: float):
+    """Silently predicts using the staging model and logs the deviation."""
+    if shadow_model is not None:
+        try:
+            shadow_pred = float(shadow_model.predict(df)[0])
+            deviation = abs(prod_prediction - shadow_pred)
+            if deviation > 1.0: # Huge deviation
+                print(f"[SHADOW ALERT] Staging model differs significantly! Prod: {prod_prediction:.2f}, Shadow: {shadow_pred:.2f}")
+        except Exception:
+            pass
+
 @app.post("/predict", response_model=PredictionResponse)
-def predict(features: HousingFeatures):
+def predict(features: HousingFeatures, background_tasks: BackgroundTasks):
     """
     Predicts median house value and asynchronously pushes event to EventStream.
+    Executes shadow scoring if a staging model is active.
     """
     global model, model_version_tag
     if model is None:
@@ -75,6 +100,9 @@ def predict(features: HousingFeatures):
     
     # Non-blocking async event publish
     producer.publish_prediction_event(request_id, feature_dict, prediction)
+    
+    # Trigger shadow deployment scoring
+    background_tasks.add_task(run_shadow_scoring, df, prediction)
 
     return PredictionResponse(
         request_id=request_id,

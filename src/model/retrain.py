@@ -114,6 +114,10 @@ def run_retraining_pipeline(
         stage_tag="Staging"
     )
     
+    # Save locally for FastAPI shadow deployment
+    joblib.dump(candidate_model, "staging_model.joblib")
+    print("Saved candidate model to staging_model.joblib for shadow evaluation")
+    
     if update_baseline_distribution:
         save_baseline_distributions(X, output_path="baseline_distribution.json")
         print("Updated reference baseline feature distributions after retraining.")
