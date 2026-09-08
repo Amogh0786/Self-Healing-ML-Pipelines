@@ -47,7 +47,9 @@ class HybridDecisionEngine:
         sample_count: int = 400,
         error_rate: float = 0.0,
         ignore_cooldown: bool = False,
-        mean_psi: float = 0.0
+        mean_psi: float = 0.0,
+        recent_mse: float = 0.0,
+        baseline_mse: float = 1.0
     ) -> Dict[str, Any]:
         """
         Evaluates context through the hybrid control loop and returns an auditable decision payload.
@@ -59,6 +61,8 @@ class HybridDecisionEngine:
             error_rate: Observed prediction error rate or error spike metric.
             ignore_cooldown: Set True for testing/simulations to bypass cooldown timers.
             mean_psi: Alternative PSI metric argument for compatibility.
+            recent_mse: Actual mean squared error based on delayed ground truth (Concept Drift).
+            baseline_mse: The historical baseline MSE for comparison.
 
         Returns:
             Dict[str, Any]: Structured JSON decision payload containing action, confidence, and rationale.
@@ -68,17 +72,20 @@ class HybridDecisionEngine:
             "max_kl": max_kl,
             "mean_psi": psi_val,
             "sample_count": sample_count,
-            "error_rate": error_rate
+            "error_rate": error_rate,
+            "recent_mse": recent_mse,
+            "baseline_mse": baseline_mse
         }
 
         # Step 1: Check if drift is below threshold -> No action needed
-        if max_kl < self.drift_threshold and psi_val < self.psi_threshold and error_rate < self.bandit_policy.high_error_threshold:
+        mse_ratio = recent_mse / baseline_mse if baseline_mse > 0 else 1.0
+        if max_kl < self.drift_threshold and psi_val < self.psi_threshold and error_rate < self.bandit_policy.high_error_threshold and mse_ratio < 1.25:
             return self._record_decision(
                 context=context,
                 action="NONE",
                 confidence=1.0,
                 source="DETERMINISTIC_RULE",
-                rationale=f"Data drift (max_kl={max_kl:.4f}, max_psi={psi_val:.4f}) is below threshold ({self.drift_threshold}). System healthy."
+                rationale=f"Data drift (KL={max_kl:.4f}, PSI={psi_val:.4f}) and Concept Drift (MSE Ratio={mse_ratio:.2f}) are below thresholds. System healthy."
             )
 
         # Step 2: Check Deterministic Override Rules (Cooldown / Critical Severity)

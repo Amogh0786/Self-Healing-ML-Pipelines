@@ -35,26 +35,32 @@ class ContextualBanditPolicy:
         mean_psi = float(context.get("mean_psi", 0.0))
         sample_count = int(context.get("sample_count", 0))
         error_rate = float(context.get("error_rate", 0.0))
+        recent_mse = float(context.get("recent_mse", 0.0))
+        baseline_mse = float(context.get("baseline_mse", 1.0)) # Prevent div by 0
 
         # Calculate posterior expected utility for each arm
         utilities: Dict[str, float] = {}
+        
+        mse_ratio = recent_mse / baseline_mse if baseline_mse > 0 else 1.0
 
-        # 1. RETRAIN Utility: Scales with KL divergence and sample statistical significance
-        if sample_count >= self.min_retrain_samples and max_kl >= self.drift_threshold:
+        # 1. RETRAIN Utility: Prioritize actual Concept Drift (MSE increase) over Feature Drift (KL)
+        if sample_count >= self.min_retrain_samples and (mse_ratio >= 1.25 or max_kl >= self.drift_threshold):
             sample_factor = min(1.0, sample_count / 300.0)
             drift_factor = min(1.0, max_kl / 0.60)
-            utilities["RETRAIN"] = 0.82 + (0.15 * sample_factor * drift_factor)
+            # If Concept Drift is proven (MSE spiked 25%+), dramatically increase utility
+            concept_drift_boost = 0.15 if mse_ratio >= 1.25 else 0.0
+            utilities["RETRAIN"] = 0.82 + (0.10 * sample_factor * drift_factor) + concept_drift_boost
         else:
             utilities["RETRAIN"] = 0.30
 
-        # 2. ROLLBACK Utility: High when error rate spikes rapidly on a recent deployment
-        if error_rate >= self.high_error_threshold:
+        # 2. ROLLBACK Utility: High when error rate or severe MSE spike occurs
+        if error_rate >= self.high_error_threshold or mse_ratio >= 2.0:
             utilities["ROLLBACK"] = 0.85 + min(0.10, error_rate * 0.5)
         else:
             utilities["ROLLBACK"] = 0.20
 
         # 3. FALLBACK Utility: High when sample size is too small to safely retrain
-        if sample_count < self.min_retrain_samples and max_kl >= self.drift_threshold:
+        if sample_count < self.min_retrain_samples and (mse_ratio >= 1.25 or max_kl >= self.drift_threshold):
             utilities["FALLBACK"] = 0.88
         else:
             utilities["FALLBACK"] = 0.15
